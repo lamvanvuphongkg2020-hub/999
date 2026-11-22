@@ -288,6 +288,56 @@
       gap: 8px;
       justify-content: center;
     }
+    .wheel-wrap {
+      position: relative;
+      width: 210px;
+      height: 210px;
+      margin: 8px auto 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .wheel-pointer {
+      position: absolute;
+      top: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 20px;
+      z-index: 3;
+      color: #d63f7d;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+    .wheel-disc {
+      width: 196px;
+      height: 196px;
+      border-radius: 50%;
+      border: 5px solid #ff8ab8;
+      background: conic-gradient(
+        #ffe3ef 0deg 90deg,
+        #f3e8ff 90deg 180deg,
+        #fff0c2 180deg 270deg,
+        #dff7ec 270deg 360deg
+      );
+      box-shadow: 0 10px 24px rgba(214, 63, 125, 0.2);
+      transition: transform 2.8s cubic-bezier(0.18, 0.89, 0.32, 1);
+      position: relative;
+    }
+    .wheel-center {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #ff6ea8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #b84a76;
+      z-index: 2;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+    }
   </style>
 </head>
 <body>
@@ -321,7 +371,7 @@
         <div class="streak-text">
           Đã điểm danh: <strong id="streakCount">0</strong> / <span id="totalDaysInMonth">30</span> ngày
         </div>
-        <button id="claimRewardBtn" type="button" style="display: none;">Nhận quà tháng 🎁</button>
+        <button id="claimRewardBtn" type="button" style="display: none;">Vòng quay cuối tháng 🎡</button>
       </div>
       <div class="streak-sub" id="attendanceTodayStatus">Đang ghi nhận điểm danh hôm nay...</div>
     </div>
@@ -344,10 +394,15 @@
 
   <div class="modal" id="rewardModal">
     <div class="modal-box">
-      <h3>Quà điểm danh đủ tháng 🎉</h3>
-      <p id="rewardResultText">Bấm quay để mở quà bất ngờ nhé!</p>
+      <h3>Vòng quay quà cuối tháng 🎉</h3>
+      <div class="wheel-wrap">
+        <div class="wheel-pointer">▼</div>
+        <div class="wheel-disc" id="wheelDisc"></div>
+        <div class="wheel-center">♡</div>
+      </div>
+      <p id="rewardResultText">Đã tới cuối tháng rồi, bấm quay để nhận quà nhé!</p>
       <div class="modal-actions">
-        <button id="spinRewardBtn" type="button">Quay quà</button>
+        <button id="spinRewardBtn" type="button">Quay ngay</button>
         <button class="secondary" id="closeRewardBtn" type="button">Đóng</button>
       </div>
     </div>
@@ -454,35 +509,127 @@
       }
     }
 
-    // 2. Nhạc nền dịu êm
+    // 2. Nhạc nền dịu êm — phát trọn vẹn nguyên 1 bài: Công Chúa Bông Bống
     let audioCtx = null;
-    let musicInterval = null;
+    let musicTimeout = null;
     let noteStep = 0;
     let musicOn = localStorage.getItem('dw_music_on') === 'true';
-    const notes = [523.25, 659.25, 783.99, 659.25, 587.33, 698.46, 880.00, 783.99];
+
+    const NOTE_FREQ = {
+      C3: 130.81, D3: 146.83, E3: 164.81, F3: 174.61, G3: 196.00, A3: 220.00, B3: 246.94,
+      C4: 261.63, 'C#4': 277.18, D4: 293.66, 'D#4': 311.13, E4: 329.63, F4: 349.23, 'F#4': 369.99,
+      G4: 392.00, 'G#4': 415.30, A4: 440.00, 'A#4': 466.16, B4: 493.88,
+      C5: 523.25, 'C#5': 554.37, D5: 587.33, 'D#5': 622.25, E5: 659.25, F5: 698.46, 'F#5': 739.99,
+      G5: 783.99, 'G#5': 830.61, A5: 880.00, B5: 987.77,
+      C6: 1046.50
+    };
+
+    // Chuỗi nốt liền mạch nguyên bài "Công Chúa Bông Bống" (mỗi mục: [nốt_chính, nốt_bè_hoặc_null, thời_lượng_giây, nghỉ_ms])
+    const fullBongBongSong = [
+      // --- PHẦN 1: MỞ ĐẦU NHẸ NHÀNG ---
+      ['E4', 'C4', 0.42, 340], ['G4', 'E4', 0.42, 340], ['A4', 'F4', 0.45, 360], ['G4', 'E4', 0.55, 450],
+      ['E4', 'C4', 0.42, 340], ['D4', 'B3', 0.42, 340], ['C4', 'G3', 0.65, 520], ['D4', 'A3', 0.42, 340],
+      ['E4', 'C4', 0.42, 340], ['F4', 'D4', 0.42, 340], ['G4', 'E4', 0.45, 360], ['A4', 'F4', 0.42, 340],
+      ['G4', 'E4', 0.42, 340], ['E4', 'C4', 0.45, 360], ['D4', 'G3', 0.70, 560], ['REST', null, 0.25, 220],
+
+      // --- PHẦN 2: ĐOẠN 1 - CÔNG CHÚA BÔNG BỐNG ---
+      ['G4', 'E4', 0.40, 320], ['A4', 'F4', 0.40, 320], ['C5', 'G4', 0.48, 380], ['C5', 'G4', 0.42, 340],
+      ['A4', 'F4', 0.42, 340], ['G4', 'E4', 0.42, 340], ['E4', 'C4', 0.55, 440], ['G4', 'D4', 0.40, 320],
+      ['A4', 'F4', 0.40, 320], ['G4', 'E4', 0.42, 340], ['E4', 'C4', 0.42, 340], ['D4', 'B3', 0.42, 340],
+      ['C4', 'G3', 0.45, 360], ['D4', 'A3', 0.45, 360], ['E4', 'C4', 0.72, 580], ['REST', null, 0.25, 220],
+
+      // --- PHẦN 3: TIẾP NỐI ĐOẠN 1 ---
+      ['A4', 'F4', 0.40, 320], ['C5', 'A4', 0.42, 340], ['D5', 'B4', 0.48, 380], ['C5', 'G4', 0.42, 340],
+      ['A4', 'F4', 0.42, 340], ['G4', 'E4', 0.42, 340], ['F4', 'D4', 0.45, 360], ['E4', 'C4', 0.45, 360],
+      ['D4', 'B3', 0.42, 340], ['E4', 'C4', 0.42, 340], ['G4', 'E4', 0.45, 360], ['A4', 'F4', 0.42, 340],
+      ['G4', 'D4', 0.45, 360], ['F4', 'D4', 0.42, 340], ['D4', 'G3', 0.45, 360], ['C4', 'C3', 0.78, 640],
+
+      // --- PHẦN 4: ĐIỆP KHÚC RỘN RÀNG ---
+      ['C5', 'G4', 0.42, 330], ['E5', 'C5', 0.45, 360], ['D5', 'B4', 0.42, 330], ['C5', 'A4', 0.42, 330],
+      ['A4', 'F4', 0.45, 360], ['C5', 'A4', 0.42, 330], ['G4', 'E4', 0.65, 520], ['E4', 'C4', 0.40, 320],
+      ['G4', 'E4', 0.42, 340], ['A4', 'F4', 0.42, 340], ['B4', 'G4', 0.42, 340], ['C5', 'A4', 0.45, 360],
+      ['D5', 'B4', 0.42, 340], ['B4', 'G4', 0.42, 340], ['G4', 'D4', 0.72, 580], ['REST', null, 0.25, 220],
+
+      // --- PHẦN 5: CAO TRÀO & BIẾN TẤU ---
+      ['E5', 'C5', 0.42, 330], ['F5', 'D5', 0.42, 330], ['E5', 'C5', 0.45, 360], ['D5', 'B4', 0.42, 330],
+      ['C5', 'A4', 0.45, 360], ['A4', 'F4', 0.42, 330], ['G4', 'E4', 0.45, 360], ['A4', 'F4', 0.42, 330],
+      ['G4', 'E4', 0.42, 330], ['F4', 'D4', 0.42, 330], ['E4', 'C4', 0.45, 360], ['D4', 'B3', 0.42, 330],
+      ['F#4', 'D4', 0.40, 320], ['G4', 'E4', 0.48, 380], ['A4', 'F4', 0.42, 330], ['G4', 'D4', 0.70, 560],
+
+      // --- PHẦN 6: HỒI KẾT DỊU ÊM ---
+      ['C5', 'G4', 0.42, 340], ['A4', 'F4', 0.42, 340], ['G4', 'E4', 0.45, 360], ['E4', 'C4', 0.45, 360],
+      ['F4', 'D4', 0.42, 340], ['E4', 'C4', 0.42, 340], ['D4', 'B3', 0.45, 360], ['C4', 'G3', 0.45, 360],
+      ['D4', 'A3', 0.42, 340], ['E4', 'C4', 0.45, 360], ['G4', 'E4', 0.48, 380], ['E4', 'C4', 0.50, 400],
+      ['D4', 'G3', 0.50, 420], ['C4', 'C3', 1.05, 900]
+    ];
 
     function syncMusicBtn() {
       const btn = document.getElementById("musicToggleBtn");
       if (!btn) return;
-      btn.textContent = musicOn ? "🎵 Nhạc nền: Bật" : "🎵 Nhạc nền: Tắt";
-      btn.classList.toggle("music-on", musicOn);
+      if (musicOn) {
+        btn.textContent = "🎵 Công Chúa Bông Bống";
+        btn.classList.add("music-on");
+      } else {
+        btn.textContent = "🎵 Nhạc nền: Tắt";
+        btn.classList.remove("music-on");
+      }
     }
 
-    function playNote() {
-      if (!audioCtx || audioCtx.state !== 'running') return;
+    function playSongStep(stepData) {
+      if (!audioCtx || audioCtx.state !== 'running' || !stepData) return;
+      const [mainNote, harmonyNote, durationSec] = stepData;
+      if (!mainNote || mainNote === 'REST') return;
+
+      const mainFreq = NOTE_FREQ[mainNote];
+      if (!mainFreq) return;
+
       const now = audioCtx.currentTime;
-      const osc = audioCtx.createOscillator();
+      const mainOsc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(notes[noteStep % notes.length], now);
+
+      mainOsc.type = 'sine';
+      mainOsc.frequency.setValueAtTime(mainFreq, now);
+
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.025, now + 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
-      osc.connect(gain);
+      gain.gain.exponentialRampToValueAtTime(0.03, now + 0.045);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+
+      mainOsc.connect(gain);
+
+      if (harmonyNote && NOTE_FREQ[harmonyNote]) {
+        const harmOsc = audioCtx.createOscillator();
+        const harmGain = audioCtx.createGain();
+        harmOsc.type = 'triangle';
+        harmOsc.frequency.setValueAtTime(NOTE_FREQ[harmonyNote], now);
+        harmGain.gain.setValueAtTime(0.0001, now);
+        harmGain.gain.exponentialRampToValueAtTime(0.015, now + 0.05);
+        harmGain.gain.exponentialRampToValueAtTime(0.0001, now + durationSec);
+        harmOsc.connect(harmGain);
+        harmGain.connect(audioCtx.destination);
+        harmOsc.start(now);
+        harmOsc.stop(now + durationSec + 0.03);
+      }
+
       gain.connect(audioCtx.destination);
-      osc.start(now);
-      osc.stop(now + 1.25);
+      mainOsc.start(now);
+      mainOsc.stop(now + durationSec + 0.03);
+    }
+
+    function playFullSongStep() {
+      if (!musicOn) return;
+      const stepData = fullBongBongSong[noteStep];
+      playSongStep(stepData);
+
+      const gapMs = stepData ? stepData[3] : 360;
       noteStep += 1;
+
+      if (noteStep >= fullBongBongSong.length) {
+        noteStep = 0;
+      }
+
+      musicTimeout = setTimeout(() => {
+        if (musicOn) playFullSongStep();
+      }, gapMs);
     }
 
     async function enableMusic() {
@@ -491,24 +638,27 @@
           const Ctx = window.AudioContext || window.webkitAudioContext;
           audioCtx = new Ctx();
         }
-        if (audioCtx.state === 'suspended') await audioCtx.resume();
-        if (musicInterval) clearInterval(musicInterval);
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        if (musicTimeout) {
+          clearTimeout(musicTimeout);
+          musicTimeout = null;
+        }
+        noteStep = 0;
         musicOn = true;
         localStorage.setItem('dw_music_on', 'true');
         syncMusicBtn();
-        playNote();
-        musicInterval = setInterval(() => {
-          if (musicOn) playNote();
-        }, 1050);
+        playFullSongStep();
       } catch (_) {}
     }
 
     function disableMusic() {
       musicOn = false;
       localStorage.setItem('dw_music_on', 'false');
-      if (musicInterval) {
-        clearInterval(musicInterval);
-        musicInterval = null;
+      if (musicTimeout) {
+        clearTimeout(musicTimeout);
+        musicTimeout = null;
       }
       syncMusicBtn();
     }
@@ -573,16 +723,84 @@
     }
     window.addEventListener('online', () => notifyFirstDailyWifi('bật Wi-Fi / có mạng'));
 
-    function renderAttendanceCount(totalChecked, daysInMonth) {
+    // Random ngày mở vòng quay trong khoảng [27 .. ngày cuối tháng] cho từng tháng
+    const MONTH_TRACKER_KEY = 'dw_active_month_key';
+    const RANDOM_UNLOCK_DAY_KEY = 'dw_random_wheel_unlock_day';
+    const SPIN_USED_MONTH_KEY = 'dw_month_spin_used';
+
+    let currentWheelAngle = 0;
+    let isSpinningWheel = false;
+
+    function getRandomUnlockDayForMonth(monthKey, daysInMonth) {
+      const startDay = Math.min(27, daysInMonth);
+      const saved = readJsonSafe(RANDOM_UNLOCK_DAY_KEY, {});
+      if (
+        saved &&
+        saved.monthKey === monthKey &&
+        Number.isInteger(saved.unlockDay) &&
+        saved.unlockDay >= startDay &&
+        saved.unlockDay <= daysInMonth
+      ) {
+        return saved.unlockDay;
+      }
+
+      const randomDay = startDay + Math.floor(Math.random() * (daysInMonth - startDay + 1));
+      writeJsonSafe(RANDOM_UNLOCK_DAY_KEY, { monthKey, unlockDay: randomDay });
+      return randomDay;
+    }
+
+    function checkAndResetMonthlyCycle(ctx) {
+      const monthKey = ctx.monthPrefix.slice(0, 7);
+      const savedMonth = localStorage.getItem(MONTH_TRACKER_KEY);
+
+      if (savedMonth && savedMonth !== monthKey) {
+        localStorage.removeItem(`daily_wishes_attendance_${savedMonth.replace('-', '_')}`);
+        localStorage.removeItem(SPIN_USED_MONTH_KEY);
+        localStorage.removeItem(RANDOM_UNLOCK_DAY_KEY);
+      }
+      localStorage.setItem(MONTH_TRACKER_KEY, monthKey);
+      const unlockDay = getRandomUnlockDayForMonth(monthKey, ctx.daysInMonth);
+      return { monthKey, unlockDay };
+    }
+
+    function updateEndOfMonthRewardUI(totalChecked, daysInMonth) {
       const totalEl = document.getElementById("totalDaysInMonth");
       const streakEl = document.getElementById("streakCount");
       const rewardBtn = document.getElementById("claimRewardBtn");
+      const spinBtn = document.getElementById("spinRewardBtn");
+      const resultEl = document.getElementById("rewardResultText");
+
+      const now = new Date();
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const unlockDay = getRandomUnlockDayForMonth(monthKey, daysInMonth);
+      const isWheelUnlocked = now.getDate() >= unlockDay || totalChecked >= daysInMonth;
+      const alreadySpunThisMonth = localStorage.getItem(SPIN_USED_MONTH_KEY) === monthKey;
 
       if (totalEl) totalEl.textContent = daysInMonth;
       if (streakEl) streakEl.textContent = totalChecked;
-      if (rewardBtn && totalChecked >= daysInMonth) {
-        rewardBtn.style.display = "inline-block";
+
+      if (rewardBtn) {
+        rewardBtn.style.display = isWheelUnlocked ? "inline-block" : "none";
+        rewardBtn.textContent = alreadySpunThisMonth ? "Đã quay tháng này 🎁" : "Vòng quay cuối tháng 🎡";
       }
+
+      if (spinBtn && resultEl) {
+        if (alreadySpunThisMonth) {
+          spinBtn.disabled = true;
+          spinBtn.textContent = "Đã nhận quà tháng này";
+          const savedPrize = localStorage.getItem(`dw_month_prize_${monthKey}`);
+          if (savedPrize) {
+            resultEl.textContent = `Quà tháng này của bạn: ${savedPrize}`;
+          }
+        } else {
+          spinBtn.disabled = false;
+          spinBtn.textContent = "Quay ngay";
+        }
+      }
+    }
+
+    function renderAttendanceCount(totalChecked, daysInMonth) {
+      updateEndOfMonthRewardUI(totalChecked, daysInMonth);
     }
 
     function readLocalAttendance(localKey) {
@@ -616,6 +834,8 @@
 
     async function processDailyAttendance() {
       const ctx = getMonthContext();
+      checkAndResetMonthlyCycle(ctx);
+
       const statusEl = document.getElementById("attendanceTodayStatus");
       let localDates = readLocalAttendance(ctx.localKey);
 
@@ -751,18 +971,52 @@
     const claimRewardBtn = document.getElementById("claimRewardBtn");
     const closeRewardBtn = document.getElementById("closeRewardBtn");
     const spinRewardBtn = document.getElementById("spinRewardBtn");
+    const wheelDisc = document.getElementById("wheelDisc");
 
     if (claimRewardBtn && rewardModal) {
-      claimRewardBtn.onclick = () => rewardModal.classList.add("open");
+      claimRewardBtn.onclick = () => {
+        const ctx = getMonthContext();
+        const localDates = readLocalAttendance(ctx.localKey);
+        updateEndOfMonthRewardUI(localDates.length, ctx.daysInMonth);
+        rewardModal.classList.add("open");
+      };
     }
+
     if (closeRewardBtn && rewardModal) {
       closeRewardBtn.onclick = () => rewardModal.classList.remove("open");
     }
+
     if (spinRewardBtn) {
       spinRewardBtn.onclick = () => {
-        const picked = rewardsPool[Math.floor(Math.random() * rewardsPool.length)];
+        if (isSpinningWheel) return;
+        const now = new Date();
+        const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (localStorage.getItem(SPIN_USED_MONTH_KEY) === monthKey) return;
+
+        isSpinningWheel = true;
+        spinRewardBtn.disabled = true;
+
+        const sliceIndex = Math.floor(Math.random() * rewardsPool.length);
+        const picked = rewardsPool[sliceIndex];
+        const sliceDeg = 360 / rewardsPool.length;
+        const targetAngle = currentWheelAngle + 360 * 5 + (360 - (sliceIndex * sliceDeg + sliceDeg / 2));
+        currentWheelAngle = targetAngle;
+
+        if (wheelDisc) {
+          wheelDisc.style.transform = `rotate(${currentWheelAngle}deg)`;
+        }
+
         const resultEl = document.getElementById("rewardResultText");
-        if (resultEl) resultEl.textContent = `Phần thưởng của bạn: ${picked}`;
+        if (resultEl) resultEl.textContent = "Vòng quay đang chạy...";
+
+        setTimeout(() => {
+          localStorage.setItem(SPIN_USED_MONTH_KEY, monthKey);
+          localStorage.setItem(`dw_month_prize_${monthKey}`, picked);
+          if (resultEl) resultEl.textContent = `Phần thưởng tháng này của bạn: ${picked}`;
+          spinRewardBtn.textContent = "Đã nhận quà tháng này";
+          if (claimRewardBtn) claimRewardBtn.textContent = "Đã quay tháng này 🎁";
+          isSpinningWheel = false;
+        }, 2850);
       };
     }
 

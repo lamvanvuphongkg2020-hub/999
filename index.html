@@ -21,6 +21,40 @@
       padding: 20px 14px 48px;
       display: flex;
       justify-content: center;
+      position: relative;
+      overflow-x: hidden;
+    }
+    .hearts-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 0;
+    }
+    .floating-heart {
+      position: absolute;
+      bottom: -30px;
+      color: #ff7eb3;
+      opacity: 0;
+      animation: floatHeart linear infinite;
+      user-select: none;
+    }
+    @keyframes floatHeart {
+      0% {
+        transform: translateY(0) translateX(0) scale(0.85) rotate(-6deg);
+        opacity: 0;
+      }
+      20% {
+        opacity: 0.42;
+      }
+      50% {
+        transform: translateY(-50vh) translateX(12px) scale(1) rotate(6deg);
+        opacity: 0.35;
+      }
+      100% {
+        transform: translateY(-106vh) translateX(-10px) scale(1.05) rotate(-6deg);
+        opacity: 0;
+      }
     }
     .container {
       width: 100%;
@@ -28,6 +62,8 @@
       display: flex;
       flex-direction: column;
       gap: 14px;
+      position: relative;
+      z-index: 1;
     }
     .header-card {
       background: rgba(255, 255, 255, 0.88);
@@ -40,11 +76,18 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
+      flex-wrap: wrap;
     }
     .header-title {
       font-size: 18px;
       font-weight: 700;
       color: #b84a76;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
     .header-date {
       font-size: 12px;
@@ -54,6 +97,24 @@
       padding: 5px 11px;
       border-radius: 999px;
       border: 1px solid #ffd9e8;
+    }
+    .daily-alert-banner {
+      display: none;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #ffb8d3;
+      border-left: 4px solid #ff5e9c;
+      border-radius: 16px;
+      padding: 12px 14px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: #6b364d;
+      box-shadow: 0 6px 18px rgba(235, 140, 175, 0.16);
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .daily-alert-banner.show {
+      display: flex;
     }
     .card {
       background: rgba(255, 255, 255, 0.9);
@@ -70,6 +131,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
     }
     .wish-box {
       background: #fff7fa;
@@ -96,11 +158,16 @@
       box-shadow: 0 4px 12px rgba(255, 94, 156, 0.25);
       transition: transform 0.12s ease, opacity 0.15s ease;
     }
-    button:hover {
+    button:hover:not(:disabled) {
       transform: translateY(-1px);
     }
-    button:active {
+    button:active:not(:disabled) {
       transform: translateY(0);
+    }
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+      transform: none;
     }
     button.secondary {
       background: #fff0f6;
@@ -109,6 +176,11 @@
       box-shadow: none;
       padding: 6px 11px;
       font-size: 11px;
+    }
+    button.music-on {
+      background: #ffe3ef;
+      color: #b52d68;
+      border-color: #ff9ec4;
     }
     .streak-row {
       display: flex;
@@ -219,10 +291,20 @@
   </style>
 </head>
 <body>
+  <div class="hearts-layer" id="heartsLayer" aria-hidden="true"></div>
+
   <div class="container">
     <div class="header-card">
       <div class="header-title">Daily Wishes ♡</div>
-      <div class="header-date" id="today"></div>
+      <div class="header-right">
+        <button class="secondary" id="musicToggleBtn" type="button">🎵 Nhạc nền: Tắt</button>
+        <div class="header-date" id="today"></div>
+      </div>
+    </div>
+
+    <div class="daily-alert-banner" id="dailyAlertBanner">
+      <div id="dailyAlertText"></div>
+      <button class="secondary" id="dismissAlertBtn" type="button">Đã rõ ♡</button>
     </div>
 
     <div class="card">
@@ -315,12 +397,181 @@
       };
     }
 
+    function readJsonSafe(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function writeJsonSafe(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (_) {}
+    }
+
+    // 1. Khóa thông điệp 1 ngày 1 lần & không trùng lặp
+    const LOCKED_WISH_KEY = 'dw_locked_wish_by_day';
+    const USED_WISH_KEY = 'dw_used_wish_indices';
+
+    function pickUniqueWishIndex() {
+      let used = readJsonSafe(USED_WISH_KEY, []);
+      if (!Array.isArray(used)) used = [];
+      used = used.filter((i) => Number.isInteger(i) && i >= 0 && i < wishesList.length);
+
+      let pool = wishesList.map((_, i) => i).filter((i) => !used.includes(i));
+      if (!pool.length) {
+        used = [];
+        pool = wishesList.map((_, i) => i);
+      }
+      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      used.push(chosen);
+      writeJsonSafe(USED_WISH_KEY, used);
+      return chosen;
+    }
+
     function showDailyWish() {
       const el = document.getElementById("wish");
+      const btn = document.getElementById("todayWishBtn");
       if (!el) return;
-      const idx = Math.floor(Math.random() * wishesList.length);
+
+      const { dateString } = getMonthContext();
+      const map = readJsonSafe(LOCKED_WISH_KEY, {});
+      let idx = map[dateString];
+
+      if (!Number.isInteger(idx) || idx < 0 || idx >= wishesList.length) {
+        idx = pickUniqueWishIndex();
+        map[dateString] = idx;
+        writeJsonSafe(LOCKED_WISH_KEY, map);
+      }
+
       el.textContent = wishesList[idx];
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Đã khóa hôm nay 🔒";
+      }
     }
+
+    // 2. Nhạc nền dịu êm
+    let audioCtx = null;
+    let musicInterval = null;
+    let noteStep = 0;
+    let musicOn = localStorage.getItem('dw_music_on') === 'true';
+    const notes = [523.25, 659.25, 783.99, 659.25, 587.33, 698.46, 880.00, 783.99];
+
+    function syncMusicBtn() {
+      const btn = document.getElementById("musicToggleBtn");
+      if (!btn) return;
+      btn.textContent = musicOn ? "🎵 Nhạc nền: Bật" : "🎵 Nhạc nền: Tắt";
+      btn.classList.toggle("music-on", musicOn);
+    }
+
+    function playNote() {
+      if (!audioCtx || audioCtx.state !== 'running') return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(notes[noteStep % notes.length], now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.025, now + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 1.25);
+      noteStep += 1;
+    }
+
+    async function enableMusic() {
+      try {
+        if (!audioCtx) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new Ctx();
+        }
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
+        if (musicInterval) clearInterval(musicInterval);
+        musicOn = true;
+        localStorage.setItem('dw_music_on', 'true');
+        syncMusicBtn();
+        playNote();
+        musicInterval = setInterval(() => {
+          if (musicOn) playNote();
+        }, 1050);
+      } catch (_) {}
+    }
+
+    function disableMusic() {
+      musicOn = false;
+      localStorage.setItem('dw_music_on', 'false');
+      if (musicInterval) {
+        clearInterval(musicInterval);
+        musicInterval = null;
+      }
+      syncMusicBtn();
+    }
+
+    const musicBtn = document.getElementById("musicToggleBtn");
+    if (musicBtn) {
+      syncMusicBtn();
+      musicBtn.onclick = () => (musicOn ? disableMusic() : enableMusic());
+    }
+    document.addEventListener('pointerdown', () => {
+      if (musicOn && (!audioCtx || audioCtx.state === 'suspended')) enableMusic();
+    }, { once: true });
+
+    // 3. Trái tim bay xung quanh
+    function initHearts() {
+      const layer = document.getElementById("heartsLayer");
+      if (!layer) return;
+      const icons = ['♡', '♥', '💕', '💗'];
+      for (let i = 0; i < 16; i++) {
+        const h = document.createElement("span");
+        h.className = "floating-heart";
+        h.textContent = icons[i % icons.length];
+        h.style.left = `${(i * 6.2) % 96}%`;
+        h.style.fontSize = `${14 + (i % 4) * 3}px`;
+        h.style.animationDuration = `${8 + (i % 5) * 2}s`;
+        h.style.animationDelay = `-${(i * 1.1) % 8}s`;
+        layer.appendChild(h);
+      }
+    }
+
+    // 4. Thông báo lần đầu trong ngày mở / có Wi-Fi
+    async function notifyFirstDailyWifi(reasonText) {
+      const { dateString, displayDate } = getMonthContext();
+      const key = 'dw_first_wifi_notif_day';
+      if (localStorage.getItem(key) === dateString || !navigator.onLine) return;
+      localStorage.setItem(key, dateString);
+
+      const msg = `Chào ngày mới ${displayDate}! Bạn vừa ${reasonText} lần đầu hôm nay — lời chúc và điểm danh đã sẵn sàng ♡`;
+      const banner = document.getElementById("dailyAlertBanner");
+      const alertText = document.getElementById("dailyAlertText");
+      if (banner && alertText) {
+        alertText.textContent = msg;
+        banner.classList.add("show");
+      }
+
+      if ('Notification' in window) {
+        try {
+          if (Notification.permission === 'default') await Notification.requestPermission();
+          if (Notification.permission === 'granted') {
+            new Notification('Daily Wishes ♡', { body: msg });
+          }
+        } catch (_) {}
+      }
+    }
+
+    const dismissAlertBtn = document.getElementById("dismissAlertBtn");
+    if (dismissAlertBtn) {
+      dismissAlertBtn.onclick = () => {
+        const banner = document.getElementById("dailyAlertBanner");
+        if (banner) banner.classList.remove("show");
+      };
+    }
+    window.addEventListener('online', () => notifyFirstDailyWifi('bật Wi-Fi / có mạng'));
 
     function renderAttendanceCount(totalChecked, daysInMonth) {
       const totalEl = document.getElementById("totalDaysInMonth");
@@ -515,7 +766,9 @@
       };
     }
 
+    initHearts();
     showDailyWish();
+    notifyFirstDailyWifi('mở trang');
     processDailyAttendance();
     loadPlans();
     setupRealtimeSync();

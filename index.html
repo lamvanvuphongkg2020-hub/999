@@ -189,6 +189,12 @@
       gap: 10px;
       flex-wrap: wrap;
     }
+    .streak-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .streak-text {
       font-size: 13px;
       color: #5a3a4a;
@@ -371,9 +377,12 @@
         <div class="streak-text">
           Đã điểm danh: <strong id="streakCount">0</strong> / <span id="totalDaysInMonth">30</span> ngày
         </div>
-        <button id="claimRewardBtn" type="button" style="display: none;">Vòng quay cuối tháng 🎡</button>
+        <div class="streak-actions">
+          <button id="checkInBtn" type="button">Điểm danh hôm nay ✓</button>
+          <button id="claimRewardBtn" type="button" style="display: none;">Vòng quay cuối tháng 🎡</button>
+        </div>
       </div>
-      <div class="streak-sub" id="attendanceTodayStatus">Đang ghi nhận điểm danh hôm nay...</div>
+      <div class="streak-sub" id="attendanceTodayStatus">Bấm "Điểm danh hôm nay" để ghi nhận ngày hôm nay nhé.</div>
     </div>
 
     <div class="card">
@@ -689,14 +698,15 @@
       }
     }
 
-    // 4. Thông báo lần đầu trong ngày mở / có Wi-Fi
-    async function notifyFirstDailyWifi(reasonText) {
-      const { dateString, displayDate } = getMonthContext();
-      const key = 'dw_first_wifi_notif_day';
-      if (localStorage.getItem(key) === dateString || !navigator.onLine) return;
-      localStorage.setItem(key, dateString);
+    // 4. Thông báo nhắc điểm danh khi bật/kết nối Wi-Fi lần đầu tiên trong ngày
+    const FIRST_WIFI_DAY_KEY = 'dw_first_wifi_remind_day';
 
-      const msg = `Chào ngày mới ${displayDate}! Bạn vừa ${reasonText} lần đầu hôm nay — lời chúc và điểm danh đã sẵn sàng ♡`;
+    async function remindFirstDailyWifi() {
+      const { dateString, displayDate } = getMonthContext();
+      if (!navigator.onLine || localStorage.getItem(FIRST_WIFI_DAY_KEY) === dateString) return;
+      localStorage.setItem(FIRST_WIFI_DAY_KEY, dateString);
+
+      const msg = `Chào ngày mới ${displayDate}! Bạn vừa mở Wi-Fi lần đầu hôm nay — vào điểm danh và nhận lời chúc nhé ♡`;
       const banner = document.getElementById("dailyAlertBanner");
       const alertText = document.getElementById("dailyAlertText");
       if (banner && alertText) {
@@ -706,7 +716,9 @@
 
       if ('Notification' in window) {
         try {
-          if (Notification.permission === 'default') await Notification.requestPermission();
+          if (Notification.permission === 'default') {
+            await Notification.requestPermission();
+          }
           if (Notification.permission === 'granted') {
             new Notification('Daily Wishes ♡', { body: msg });
           }
@@ -721,7 +733,8 @@
         if (banner) banner.classList.remove("show");
       };
     }
-    window.addEventListener('online', () => notifyFirstDailyWifi('bật Wi-Fi / có mạng'));
+
+    window.addEventListener('online', remindFirstDailyWifi);
 
     // Random ngày mở vòng quay trong khoảng [27 .. ngày cuối tháng] cho từng tháng
     const MONTH_TRACKER_KEY = 'dw_active_month_key';
@@ -761,6 +774,13 @@
       localStorage.setItem(MONTH_TRACKER_KEY, monthKey);
       const unlockDay = getRandomUnlockDayForMonth(monthKey, ctx.daysInMonth);
       return { monthKey, unlockDay };
+    }
+
+    function syncCheckInBtnState(checkedToday) {
+      const checkInBtn = document.getElementById("checkInBtn");
+      if (!checkInBtn) return;
+      checkInBtn.disabled = checkedToday;
+      checkInBtn.textContent = checkedToday ? "Đã điểm danh hôm nay ✓" : "Điểm danh hôm nay ✓";
     }
 
     function updateEndOfMonthRewardUI(totalChecked, daysInMonth) {
@@ -829,21 +849,57 @@
       const merged = Array.from(new Set([...localDates, ...cloudDates]));
       writeLocalAttendance(ctx.localKey, merged);
       renderAttendanceCount(merged.length, ctx.daysInMonth);
+      syncCheckInBtnState(merged.includes(ctx.dateString));
       return merged;
     }
 
-    async function processDailyAttendance() {
+    // Chỉ tải & hiển thị trạng thái hiện tại khi vào trang, không tự điểm danh
+    async function initAttendanceDisplay() {
+      const ctx = getMonthContext();
+      checkAndResetMonthlyCycle(ctx);
+
+      const statusEl = document.getElementById("attendanceTodayStatus");
+      let localDates = readLocalAttendance(ctx.localKey);
+      const alreadyToday = localDates.includes(ctx.dateString);
+
+      renderAttendanceCount(localDates.length, ctx.daysInMonth);
+      syncCheckInBtnState(alreadyToday);
+      if (statusEl) {
+        statusEl.textContent = alreadyToday
+          ? `Đã điểm danh ngày ${ctx.displayDate} ✓`
+          : `Hôm nay (${ctx.displayDate}) chưa điểm danh — bấm nút để điểm danh nhé.`;
+      }
+
+      try {
+        localDates = await syncAttendanceFromCloud(localDates, ctx);
+        const checkedAfterSync = localDates.includes(ctx.dateString);
+        syncCheckInBtnState(checkedAfterSync);
+        if (statusEl) {
+          statusEl.textContent = checkedAfterSync
+            ? `Đã đồng bộ điểm danh ngày ${ctx.displayDate} ✓`
+            : `Hôm nay (${ctx.displayDate}) chưa điểm danh — bấm nút để điểm danh nhé.`;
+        }
+      } catch (_) {}
+    }
+
+    // Chỉ khi bấm nút mới thực hiện điểm danh cho hôm nay
+    async function handleManualCheckIn() {
       const ctx = getMonthContext();
       checkAndResetMonthlyCycle(ctx);
 
       const statusEl = document.getElementById("attendanceTodayStatus");
       let localDates = readLocalAttendance(ctx.localKey);
 
-      if (!localDates.includes(ctx.dateString)) {
-        localDates.push(ctx.dateString);
-        writeLocalAttendance(ctx.localKey, localDates);
+      if (localDates.includes(ctx.dateString)) {
+        syncCheckInBtnState(true);
+        if (statusEl) statusEl.textContent = `Đã điểm danh ngày ${ctx.displayDate} rồi nhé ✓`;
+        return;
       }
+
+      localDates.push(ctx.dateString);
+      writeLocalAttendance(ctx.localKey, localDates);
       renderAttendanceCount(localDates.length, ctx.daysInMonth);
+      syncCheckInBtnState(true);
 
       try {
         const { data: existingRows, error: checkError } = await supabase
@@ -852,7 +908,7 @@
           .eq('visit_date', ctx.dateString);
 
         if (checkError) {
-          if (statusEl) statusEl.textContent = `Đã lưu tạm ngày ${ctx.displayDate} trên máy.`;
+          if (statusEl) statusEl.textContent = `Đã điểm danh ngày ${ctx.displayDate} (lưu tạm trên máy).`;
           return;
         }
 
@@ -861,16 +917,21 @@
             .from('attendance')
             .insert([{ visit_date: ctx.dateString, visited_at: ctx.timeString }]);
           if (insertError) {
-            if (statusEl) statusEl.textContent = `Đã lưu tạm ngày ${ctx.displayDate} trên máy.`;
+            if (statusEl) statusEl.textContent = `Đã điểm danh ngày ${ctx.displayDate} (lưu tạm trên máy).`;
             return;
           }
         }
 
         await syncAttendanceFromCloud(localDates, ctx);
-        if (statusEl) statusEl.textContent = `Đã đồng bộ điểm danh ngày ${ctx.displayDate} ✓`;
+        if (statusEl) statusEl.textContent = `Đã điểm danh & đồng bộ ngày ${ctx.displayDate} ✓`;
       } catch (_) {
-        if (statusEl) statusEl.textContent = `Đã lưu tạm ngày ${ctx.displayDate} trên máy.`;
+        if (statusEl) statusEl.textContent = `Đã điểm danh ngày ${ctx.displayDate} (lưu tạm trên máy).`;
       }
+    }
+
+    const checkInBtn = document.getElementById("checkInBtn");
+    if (checkInBtn) {
+      checkInBtn.onclick = handleManualCheckIn;
     }
 
     function renderPlans(weeklyPlans) {
@@ -1022,8 +1083,7 @@
 
     initHearts();
     showDailyWish();
-    notifyFirstDailyWifi('mở trang');
-    processDailyAttendance();
+    initAttendanceDisplay();
     loadPlans();
     setupRealtimeSync();
 
